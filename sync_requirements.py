@@ -2,8 +2,13 @@ import os
 import re
 import pandas as pd
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 from dotenv import load_dotenv
+import tdxoperations as tdx
+from pathlib import Path
+from excel_parser import parse_requirements_excel
+from collections import defaultdict
+
 
 # --- Configuration & DB Connection ---
 env_path = Path(__file__).resolve().parent / "deploy" / ".env"
@@ -22,157 +27,287 @@ def get_db_connection():
     )
 
 
-# --- 3DEXPERIENCE Service Stub ---
-# Replace these stubs with your actual 3DEXPERIENCE REST Web Services calls
-# (e.g., /resources/v1/modeler/dseng/dseng:EngItem or Requirement Modeler APIs)
-class ThreeDXClient:
-    def __init__(self, base_url="https://3dx.internal.net/3dspace"):
-        self.base_url = base_url
-
-    def create_requirement(self, internal_id: str, content: str, parent_3dx_id: str | None) -> str:
-        """
-        Creates a new requirement object in 3DX and attaches it under parent_3dx_id.
-        Returns the generated 3DX physicalId / object ID.
-        """
-        print(f"[3DX API] Creating Requirement '{internal_id}' (Parent 3DX: {parent_3dx_id})")
-        # Example: response = requests.post(...)
-        # return response.json()["data"][0]["id"]
-        generated_id = f"3DX-PHYS-{internal_id.replace('.', '_')}-REV-A.1"
-        return generated_id
-
-    def revise_requirement(self, old_3dx_id: str, internal_id: str, content: str, parent_3dx_id: str | None) -> str:
-        """
-        Revises the requirement in 3DX, updates the content,
-        and re-links to parent if the structure requires it.
-        Returns the new revision's 3DX physicalId.
-        """
-        print(f"[3DX API] Revising '{old_3dx_id}' for '{internal_id}' (Parent 3DX: {parent_3dx_id})")
-        # Example: response = requests.post(f".../revise/{old_3dx_id}")
-        revised_id = f"{old_3dx_id.rsplit('.', 1)[0]}.2"
-        return revised_id
-
-
-# --- Core Hierarchy Utility ---
-def extract_parent_id(internal_id: str) -> str | None:
+def step_1_detect_changes(conn, excel_reqs: dict[str, str], excel_edges: set[tuple[str, str]]):
     """
-    Extracts parent ID from dot notation.
-    '1.2.1' -> '1.2'
-    '1'     -> None
+    excel_reqs:  {internalid: content}
+    excel_edges: {(parent_id, child_id)}
     """
-    parts = str(internal_id).strip().split(".")
-    if len(parts) > 1:
-        return ".".join(parts[:-1])
-    return None
+    cursor = conn.cursor()
+    
+    # 1. Fetch current database state
+    cursor.execute('SELECT internalid, "3dxid", content FROM id_mappings;')
+    db_nodes = {row[0]: {"3dxid": row[1], "content": row[2]} for row in cursor.fetchall()}
+    
+    cursor.execute('SELECT parent_id, child_id, connection_3dx_id FROM requirement_connections;')
+    db_edges = {}
+    for parent_id, child_id, rel_id in cursor.fetchall():
+        db_edges[(parent_id, child_id)] = rel_id
 
+    # 2. Classify nodes
+    to_create = set()
+    direct_content_change = set()
+    
+    for int_id, content in excel_reqs.items():
+        if int_id not in db_nodes:
+            to_create.add(int_id)
+        elif db_nodes[int_id]["content"] != content:
+            direct_content_change.add(int_id)
 
-def sort_key_hierarchy(internal_id: str):
-    """
-    Ensures natural numerical sorting by depth:
-    '1', '1.1', '1.2', '1.2.1', '1.10', etc.
-    """
-    return [int(p) if p.isdigit() else p for p in str(internal_id).strip().split(".")]
+    # 3. Classify edges
+    db_edge_pairs = set(db_edges.keys())
+    edges_to_add = excel_edges - db_edge_pairs
+    edges_to_remove = db_edge_pairs - excel_edges
 
+    return {
+        "db_nodes": db_nodes,
+        "db_edges": db_edges,
+        "to_create": to_create,
+        "direct_content_change": direct_content_change,
+        "edges_to_add": edges_to_add,
+        "edges_to_remove": edges_to_remove
+    }
+    
+def step_2_propagate_revisions(db_nodes, to_create, direct_content_change, edges_to_add, edges_to_remove, excel_edges):
+    # Map each child to all parents (both existing DB and incoming Excel)
+    child_to_parents = defaultdict(set)
+    for p, c in excel_edges:
+        child_to_parents[c].add(p)
 
-# --- Main Sync Processor ---
-def sync_requirements_from_excel(excel_path: str):
-    threedx = ThreeDXClient()
-    df = pd.read_excel(excel_path)
+    # Start with nodes that are already in DB and need direct revision
+    to_revise = set(direct_content_change)
 
-    # Standardize column headers
-    df.columns = [c.strip().lower() for c in df.columns]
-    if "internalid" not in df.columns or "content" not in df.columns:
-        raise ValueError("Excel file must contain 'internalid' and 'content' columns.")
+    # Parents directly affected by edge additions/removals
+    for p, _ in edges_to_add:
+        if p in db_nodes:
+            to_revise.add(p)
+    for p, _ in edges_to_remove:
+        if p in db_nodes:
+            to_revise.add(p)
 
-    # Clean IDs and content
-    df["internalid"] = df["internalid"].astype(str).str.strip()
-    df["content"] = df["content"].fillna("").astype(str).str.strip()
+    # Propagate upward: any parent of a node being created or revised must be revised
+    dirty_nodes = set(to_create) | set(to_revise)
+    queue = list(dirty_nodes)
 
-    # Sort so parents are ALWAYS processed before children
-    df["sort_order"] = df["internalid"].apply(sort_key_hierarchy)
-    df = df.sort_values(by="sort_order").drop(columns=["sort_order"])
+    while queue:
+        curr = queue.pop(0)
+        for parent in child_to_parents.get(curr, []):
+            # Only revise parents that exist in DB and haven't been marked yet
+            if parent in db_nodes and parent not in to_revise:
+                to_revise.add(parent)
+                queue.append(parent)
 
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    return to_revise
 
-    try:
-        for _, row in df.iterrows():
-            internal_id = row["internalid"]
-            incoming_content = row["content"]
-            parent_internal_id = extract_parent_id(internal_id)
+def step_3_execute_elements_in_3dx(db_nodes, excel_reqs, to_create, to_revise):
+    active_3dx_ids = {k: v["3dxid"] for k, v in db_nodes.items()}
+    
+    # 1. Batch Create
+    created_map = {}
+    if to_create:
+        create_list = list(to_create)
+        contents = [excel_reqs[cid] for cid in create_list]
+        created_map = tdx.create_several_reqs(create_list, contents)
+        active_3dx_ids.update(created_map)
 
-            # 1. Fetch parent's 3DX ID if parent exists
-            parent_3dx_id = None
-            if parent_internal_id:
-                cursor.execute(
-                    'SELECT "3dxid" FROM id_mappings WHERE internalid = %s;',
-                    (parent_internal_id,)
-                )
-                parent_row = cursor.fetchone()
-                if parent_row:
-                    parent_3dx_id = parent_row["3dxid"]
-                else:
-                    print(f"[WARN] Parent '{parent_internal_id}' not found in DB for child '{internal_id}'.")
+    # 2. Batch Revise
+    revised_map = {}
+    if to_revise:
+        revise_list = list(to_revise)
+        old_3dx_ids = [db_nodes[rid]["3dxid"] for rid in revise_list]
+        
+        # If content didn't change in Excel, pass None to retain old content
+        new_contents = [
+            excel_reqs[rid] if excel_reqs.get(rid) != db_nodes[rid]["content"] else None
+            for rid in revise_list
+        ]
+        
+        # revise_several_reqs returns {old_3dxid: new_3dxid}
+        rev_3dx_to_3dx = tdx.revise_several_reqs(old_3dx_ids, new_contents)
+        
+        for rid in revise_list:
+            old_id = db_nodes[rid]["3dxid"]
+            new_id = rev_3dx_to_3dx[old_id]
+            revised_map[rid] = new_id
+            active_3dx_ids[rid] = new_id
 
-            # 2. Check current state of this requirement in the DB
-            cursor.execute(
-                'SELECT "3dxid", content, parent_id FROM id_mappings WHERE internalid = %s;',
-                (internal_id,)
+    return active_3dx_ids, created_map, revised_map
+
+def step_4_rewire_relations(db_nodes, db_edges, active_3dx_ids, to_create, to_revise, excel_edges, edges_to_remove):
+    # 1. Delete relations explicitly removed
+    del_parents = []
+    del_relids = []
+    for (p, c) in edges_to_remove:
+        # If parent was revised, its old relations are obsolete on the old revision anyway.
+        # But if not revised, we delete the relation explicitly:
+        if p not in to_revise and (p, c) in db_edges:
+            rel_id = db_edges[(p, c)]
+            if rel_id:
+                del_parents.append(active_3dx_ids[p])
+                del_relids.append(rel_id)
+
+    if del_parents:
+        tdx.delete_several_relations(del_parents, del_relids)
+
+    # 2. Collect edges that must be re-linked
+    # Any parent newly created or revised must be linked to all of its children in excel_edges
+    parents_to_link = set(to_create) | set(to_revise)
+    
+    parent_child_map = defaultdict(list)
+    for p, c in excel_edges:
+        if p in parents_to_link:
+            parent_child_map[p].append(c)
+
+    new_relation_records = {} # {(p_id, c_id): rel_3dx_id}
+
+    if parent_child_map:
+        parents_3dx = []
+        children_3dx_lists = []
+        parent_order = []
+
+        for p_id, child_ids in parent_child_map.items():
+            parent_order.append(p_id)
+            parents_3dx.append(active_3dx_ids[p_id])
+            children_3dx_lists.append([active_3dx_ids[cid] for cid in child_ids])
+
+        # relate_several_elements returns: {"parent_3dxid": {"child_3dxid": "rel_id"}}
+        raw_res = tdx.relate_several_elements(parents_3dx, children_3dx_lists)
+
+        # Invert active_3dx_ids to map back to internal IDs
+        id_3dx_to_internal = {v: k for k, v in active_3dx_ids.items()}
+
+        for p_3dx, child_dict in raw_res.items():
+            p_int = id_3dx_to_internal.get(p_3dx)
+            for c_3dx, rel_id in child_dict.items():
+                c_int = id_3dx_to_internal.get(c_3dx)
+                if p_int and c_int:
+                    new_relation_records[(p_int, c_int)] = rel_id
+
+    return new_relation_records
+
+def step_5_persist_and_release(conn, excel_reqs, active_3dx_ids, to_create, to_revise, excel_edges, new_relation_records, db_edges):
+    with conn.cursor() as cur:
+        # 1. Insert newly created requirements into id_mappings
+        if to_create:
+            insert_data = [
+                (cid, active_3dx_ids[cid], excel_reqs[cid])
+                for cid in to_create
+            ]
+            execute_values(
+                cur,
+                'INSERT INTO id_mappings (internalid, "3dxid", content) VALUES %s;',
+                insert_data
             )
-            existing_record = cursor.fetchone()
 
-            # --- Scenario 1: New Requirement ---
-            if existing_record is None:
-                new_3dx_id = threedx.create_requirement(internal_id, incoming_content, parent_3dx_id)
+        # 2. Update revised requirements in id_mappings
+        if to_revise:
+            update_data = [
+                (active_3dx_ids[rid], excel_reqs[rid], rid)
+                for rid in to_revise
+            ]
+            execute_values(
+                cur,
+                'UPDATE id_mappings AS m SET "3dxid" = v.new_3dxid, content = v.content '
+                'FROM (VALUES %s) AS v(new_3dxid, content, internalid) '
+                'WHERE m.internalid = v.internalid;',
+                update_data
+            )
 
-                cursor.execute(
-                    """
-                    INSERT INTO id_mappings (internalid, "3dxid", parent_id, content)
-                    VALUES (%s, %s, %s, %s);
-                    """,
-                    (internal_id, new_3dx_id, parent_internal_id, incoming_content)
-                )
-                print(f"[SUCCESS] Created and mapped: {internal_id} -> {new_3dx_id}")
+        # 3. Synchronize requirement_connections
+        # Remove old/stale connections for revised parents and removed edges
+        parents_cleared = set(to_revise) | set(to_create)
+        if parents_cleared:
+            cur.execute(
+                'DELETE FROM requirement_connections WHERE parent_id = ANY(%s);',
+                (list(parents_cleared),)
+            )
 
-            # --- Scenario 2 & 3: Requirement already exists ---
-            else:
-                existing_content = existing_record["content"] or ""
-                old_3dx_id = existing_record["3dxid"]
+        # Insert new/updated relations
+        records_to_insert = []
+        for p, c in excel_edges:
+            if (p, c) in new_relation_records:
+                records_to_insert.append((p, c, new_relation_records[(p, c)]))
+            elif (p, c) in db_edges:
+                records_to_insert.append((p, c, db_edges[(p, c)]))
 
-                # Content unchanged -> Do nothing
-                if existing_content.strip() == incoming_content.strip():
-                    print(f"[SKIP] Unchanged: {internal_id}")
-                    continue
+        if records_to_insert:
+            execute_values(
+                cur,
+                'INSERT INTO requirement_connections (parent_id, child_id, connection_3dx_id) '
+                'VALUES %s ON CONFLICT (child_id, parent_id) '
+                'DO UPDATE SET connection_3dx_id = EXCLUDED.connection_3dx_id;',
+                records_to_insert
+            )
 
-                # --- Scenario 3: Requirement Modified ---
-                print(f"[EDIT DETECTED] Requirement '{internal_id}' content has changed.")
-                new_revision_3dx_id = threedx.revise_requirement(
-                    old_3dx_id, internal_id, incoming_content, parent_3dx_id
-                )
+    conn.commit()
 
-                cursor.execute(
-                    """
-                    UPDATE id_mappings
-                    SET "3dxid" = %s,
-                        content = %s,
-                        parent_id = %s
-                    WHERE internalid = %s;
-                    """,
-                    (new_revision_3dx_id, incoming_content, parent_internal_id, internal_id)
-                )
-                print(f"[SUCCESS] Revised: {internal_id} -> {new_revision_3dx_id}")
+    # 4. Final Release in 3DX
+    items_to_release = [active_3dx_ids[i] for i in set(to_create) | set(to_revise)]
+    if items_to_release:
+        tdx.release_serveral_reqs(items_to_release)
 
-        conn.commit()
-        print("\nAll requirements processed and synchronized successfully.")
+def sync_excel_to_3dx(conn, excel_reqs: dict[str, str], excel_edges: set[tuple[str, str]]):
+    """
+    Master runner function.
+    """
+    # 1. Diff analysis
+    diff = step_1_detect_changes(conn, excel_reqs, excel_edges)
+    
+    # 2. Bubble up revisions to all affected parents
+    to_revise = step_2_propagate_revisions(
+        diff["db_nodes"],
+        diff["to_create"],
+        diff["direct_content_change"],
+        diff["edges_to_add"],
+        diff["edges_to_remove"],
+        excel_edges
+    )
+    
+    if not diff["to_create"] and not to_revise and not diff["edges_to_remove"]:
+        print("Everything is up to date.")
+        return
 
-    except Exception as e:
-        conn.rollback()
-        print(f"\n[ERROR] Transaction rolled back due to error: {e}")
-        raise e
-    finally:
-        cursor.close()
-        conn.close()
+    # 3. Create & Revise elements in 3DX
+    active_3dx_ids, created_map, revised_map = step_3_execute_elements_in_3dx(
+        diff["db_nodes"],
+        excel_reqs,
+        diff["to_create"],
+        to_revise
+    )
+
+    # 4. Re-link relations in 3DX
+    new_relations = step_4_rewire_relations(
+        diff["db_nodes"],
+        diff["db_edges"],
+        active_3dx_ids,
+        diff["to_create"],
+        to_revise,
+        excel_edges,
+        diff["edges_to_remove"]
+    )
+
+    # 5. Persist to DB & Release all touched items in 3DX
+    step_5_persist_and_release(
+        conn,
+        excel_reqs,
+        active_3dx_ids,
+        diff["to_create"],
+        to_revise,
+        excel_edges,
+        new_relations,
+        diff["db_edges"]
+    )
+    
+    print(f"Sync complete: {len(diff['to_create'])} created, {len(to_revise)} revised/relinked.")
 
 
-if __name__ == "__main__":
-    # Point to your test Excel file
-    sync_requirements_from_excel("requirements.xlsx")
+conn = get_db_connection()
+try:
+    # Run 1: Initial upload
+    print("\n--- RUN 1: Baseline Sync ---")
+    reqs_v1, edges_v1 = parse_requirements_excel("requirements_v2.xlsx")
+    sync_excel_to_3dx(conn, reqs_v1, edges_v1)
+
+    
+
+finally:
+    conn.close()
