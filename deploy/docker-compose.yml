@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres_mapping_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Bind strictly to the loopback interface on the host
+      - "127.0.0.1:5430:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  pgdata:
