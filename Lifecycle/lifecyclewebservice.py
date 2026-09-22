@@ -49,6 +49,7 @@ def getNextStates(session,CSRF,id):
     return response
 
 def revise(session,CSRF,ids:list[str]):
+    #maximo 100
     URL = FullURL("/version/create")
     headers=_get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     
@@ -70,6 +71,7 @@ def revise(session,CSRF,ids:list[str]):
     return response
 
 def changeState(session,CSRF,ids:list[str],nextstate):
+    #maximo 100
     URL = FullURL("/maturity/changeState")
     headers=_get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     
