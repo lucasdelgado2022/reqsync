@@ -60,6 +60,20 @@ def create_requirements(session,CSRF,titles:list[str]):
        
     return response,idmap
 
+def create_specification(session,CSRF,title):
+    URL = FullURL("/dsreq:RequirementSpecification")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+
+    payload = {"items":[{
+                    "type":"Requirement Specification",
+                    "attributes": {
+                        "title": title
+                    }
+                }]}
+    response = session.post(URL,params=params,headers=headers,json=payload)
+    id = response.json().get("member","")[0].get("id","")
+       
+    return id
 
 def edit_requirement(session,CSRF,id,content):
     URL = FullURL("/dsreq:Requirement/"+id)
@@ -90,7 +104,7 @@ def expand(session,CSRF,id,depth):
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     payload = {
         "expandDepth":depth,
-        "withPath": true
+        "withPath": True
     }
     response=session.post(URL,params=params,headers=headers,json=payload)
     return response
@@ -118,6 +132,41 @@ def assign_child(session,CSRF,parent,childs:list[str]):
         "$mask":"dsreq:SubRequirementUsageMask.Filterable"}
     )
     response = session.post(URL,params=params2,headers=headers,json=payload)
+        
+    return response
+
+def assign_child_spec(session,CSRF,parent,childs:list[str]):
+    #maximo de a 10
+    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:RequirementUsage")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    instances=[]
+    for child in childs:
+        instances.append(
+                {
+                    "referencedObject":{
+                        "id":child,
+                        "type":"Requirement",
+                        "source": logindata.get("SPACE_URL"),
+                        "relativePath":"/resources/v1/modeler/dsreq/dsreq:Requirement/"+child
+                    }
+                })
+    
+
+    payload = {"instances":instances}
+    params2=params
+    response = session.post(URL,params=params2,headers=headers,json=payload)
+        
+    return response
+
+
+def delete_child_spec(session,CSRF,parent,child):
+    #de a 1
+    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:RequirementUsage/"+child)
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    
+    response = session.delete(URL,params=params,headers=headers)
         
     return response
 
