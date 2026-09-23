@@ -122,6 +122,7 @@ def revise_several_reqs(ids:list[str],changes:list[str]):
     
     if not count==0:
         response = revise(session,ENO_CSRF_TOKEN,idsreq)
+        print(response.text)
         if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
             ENO_CSRF_TOKEN=getcsrf(session)
             response = revise(session,ENO_CSRF_TOKEN,idsreq)
@@ -166,11 +167,13 @@ def relate_several_elements(parents:list[str],childslists:list[list[str]]):
        
 
 def delete_several_relations(parents:list[str],relids:list[str]):
+    global ENO_CSRF_TOKEN
     if not len(parents)==len(relids):
         raise Exception("Longitud de padres y relaciones no coinciden")
     
     for index in range(len(parents)):
         response=delete_child(session,ENO_CSRF_TOKEN,parents[index],relids[index])
+        print(response.text)
         if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
             ENO_CSRF_TOKEN=getcsrf(session)
             response = delete_child(session,ENO_CSRF_TOKEN,idsreq)
@@ -178,4 +181,10 @@ def delete_several_relations(parents:list[str],relids:list[str]):
             raise Exception("Error al eliminar relaciones",parents[index],relids[index])
     
     
- 
+def get_parent_structure(parent_3dx_id: str) -> dict[str, str]:
+    """
+    Queries 3DX for the given parent's active children.
+    Returns a dictionary mapping child 3DX IDs to their Connection (Relationship) 3DX IDs:
+    { "child_3dx_id_1": "connection_3dx_id_1", ... }
+    """
+    pass 

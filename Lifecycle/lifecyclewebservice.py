@@ -67,7 +67,11 @@ def revise(session,CSRF,ids:list[str]):
         "edgeType": "Revision",
         "data":data
     }
-    response = session.post(URL,headers=headers,params=params,json=payload)
+    params2=params
+    params2.update({
+        "$include":"instances"
+    })
+    response = session.post(URL,headers=headers,params=params2,json=payload)
     return response
 
 def changeState(session,CSRF,ids:list[str],nextstate):

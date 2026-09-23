@@ -71,6 +71,29 @@ def edit_requirement(session,CSRF,id,content):
         
     return response
 
+def getconfig_requirement(session,id):
+    URL = FullURL("/dsreq:Requirement/"+id)
+    headers = _get_headers(security_context=SecurityContext)
+    params2=params
+    params2.update(
+        {
+            "$mask":"dsreq:RequirementPublicMask.Details"
+        }
+    )
+    response = session.get(URL,params=params2,headers=headers)
+    
+        
+    return response
+
+def expand(session,CSRF,id,depth):
+    URL = FullURL("/dsreq:RequirementSpecification/"+id+"/expand")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    payload = {
+        "expandDepth":depth,
+        "withPath": true
+    }
+    response=session.post(URL,params=params,headers=headers,json=payload)
+    return response
 def assign_child(session,CSRF,parent,childs:list[str]):
     #maximo de a 10
     URL = FullURL("/dsreq:Requirement/"+parent+"/dsreq:SubRequirementUsage")

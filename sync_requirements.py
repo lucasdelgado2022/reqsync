@@ -304,7 +304,7 @@ conn = get_db_connection()
 try:
     # Run 1: Initial upload
     print("\n--- RUN 1: Baseline Sync ---")
-    reqs_v1, edges_v1 = parse_requirements_excel("requirements_v2.xlsx")
+    reqs_v1, edges_v1 = parse_requirements_excel("requirements_v1.xlsx")
     sync_excel_to_3dx(conn, reqs_v1, edges_v1)
 
     
