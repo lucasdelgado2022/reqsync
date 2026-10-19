@@ -31,7 +31,7 @@ def _get_headers(security_context=None, accept_language=None, eno_csrf_token=Non
         headers["ENO_CSRF_TOKEN"] = eno_csrf_token
     return headers
 
-def getNextStates(session,CSRF,id):
+def getNextStates(session,CSRF,id,objtype="Requirement"):
     URL = FullURL("/maturity/getNextStates")
     headers=_get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     payload= {
@@ -39,16 +39,16 @@ def getNextStates(session,CSRF,id):
             {
                 "id":id,
                 "identifier":id,
-                "type":"Requirement",
+                "type":objtype,
                 "source": logindata.get("SPACE_URL"),
-                "relativePath":"/resources/v1/modeler/dsreq/dsreq:Requirement/"+id
+                "relativePath":"/resources/v1/modeler/dsreq/dsreq:"+objtype+"/"+id
             }
         ]
     }
     response = session.post(URL,headers=headers,params=params,json=payload)
     return response
 
-def revise(session,CSRF,ids:list[str]):
+def revise(session,CSRF,ids:list[str],objtype):
     #maximo 100
     URL = FullURL("/version/create")
     headers=_get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
@@ -59,22 +59,22 @@ def revise(session,CSRF,ids:list[str]):
             {
                 "id":id,
                 "identifier":id,
-                "type":"Requirement",
+                "type":objtype,
                 "source": logindata.get("SPACE_URL"),
-                "relativePath":"/resources/v1/modeler/dsreq/dsreq:Requirement/"+id
+                "relativePath":"/resources/v1/modeler/dsreq/dsreq:"+objtype+"/"+id
             })
     payload = {
         "edgeType": "Revision",
         "data":data
     }
-    params2=params
+    params2=params.copy()
     params2.update({
         "$include":"instances"
     })
     response = session.post(URL,headers=headers,params=params2,json=payload)
     return response
 
-def changeState(session,CSRF,ids:list[str],nextstate):
+def changeState(session,CSRF,ids:list[str],nextstate,objtype):
     #maximo 100
     URL = FullURL("/maturity/changeState")
     headers=_get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
@@ -85,9 +85,9 @@ def changeState(session,CSRF,ids:list[str],nextstate):
             {
                 "id":id,
                 "identifier":id,
-                "type":"Requirement",
+                "type":objtype,
                 "source": logindata.get("SPACE_URL"),
-                "relativePath":"/resources/v1/modeler/dsreq/dsreq:Requirement/"+id,
+                "relativePath":"/resources/v1/modeler/dsreq/dsreq:"+objtype+"/"+id,
                 "nextState":nextstate
             })
     payload = {

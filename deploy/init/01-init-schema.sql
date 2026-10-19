@@ -2,7 +2,8 @@
 CREATE TABLE IF NOT EXISTS id_mappings (
     internalid VARCHAR(255) PRIMARY KEY,
     "3dxid" VARCHAR(255) NOT NULL,
-    content TEXT
+    content TEXT,
+    object_type VARCHAR(64) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_3dxid ON id_mappings("3dxid");

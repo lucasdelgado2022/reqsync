@@ -1,0 +1,193 @@
+{
+    "member": [
+        {
+            "id": "8FD603DC514E18006AD6464400000213",
+            "type": "Chapter",
+            "label": "Capitulo A",
+            "revision": "1",
+            "status": "Chapter.InWork",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:33:18Z",
+            "islastrevision": "true",
+            "identifier": "chp-R1132101311184-00000058",
+            "policy": "Chapter",
+            "cestamp": "8FD603DC514E18006AD6464D00004A74"
+        },
+        {
+            "id": "8FD603DC514E18006AD6465800000221",
+            "type": "Chapter",
+            "label": "A.1",
+            "revision": "1",
+            "status": "Chapter.InWork",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:33:44Z",
+            "islastrevision": "true",
+            "identifier": "chp-R1132101311184-00000061",
+            "policy": "Chapter",
+            "cestamp": "8FD603DC514E18006AD6466800004AA4"
+        },
+        {
+            "id": "8FD603DC514E18006AD6466D00000227",
+            "type": "Requirement",
+            "label": "A.1.a",
+            "revision": "1",
+            "redefinedinto": "None",
+            "covers": "None",
+            "status": "Requirement.InWork",
+            "priority": "Low",
+            "difficulty": "Low",
+            "importance": "Least Important",
+            "classification": "Functional",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:34:03Z",
+            "islastrevision": "true",
+            "identifier": "req-R1132101311184-00000674",
+            "policy": "Requirement",
+            "cestamp": "8FD603DC514E18006AD6467A00004ABA"
+        },
+        {
+            "id": "8FD603DC514E18006AD6469D0000023D",
+            "type": "Requirement",
+            "label": "A.1.a.1",
+            "revision": "1",
+            "redefinedinto": "None",
+            "covers": "None",
+            "status": "Requirement.InWork",
+            "priority": "Low",
+            "difficulty": "Low",
+            "importance": "Least Important",
+            "classification": "Functional",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:35:04Z",
+            "islastrevision": "true",
+            "identifier": "req-R1132101311184-00000677",
+            "policy": "Requirement",
+            "cestamp": "8FD603DC514E18006AD646B800004AFE"
+        },
+        {
+            "id": "8FD603DC514E18006AD6467E0000022F",
+            "type": "Requirement",
+            "label": "A.2",
+            "revision": "1",
+            "redefinedinto": "None",
+            "covers": "None",
+            "status": "Requirement.InWork",
+            "priority": "Low",
+            "difficulty": "Low",
+            "importance": "Least Important",
+            "classification": "Functional",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:34:12Z",
+            "islastrevision": "true",
+            "identifier": "req-R1132101311184-00000675",
+            "policy": "Requirement",
+            "cestamp": "8FD603DC514E18006AD6468300004AD0"
+        },
+        {
+            "id": "8FD603DC514E18006AD6468900000237",
+            "type": "Requirement",
+            "label": "A.2.a",
+            "revision": "1",
+            "redefinedinto": "None",
+            "covers": "None",
+            "status": "Requirement.InWork",
+            "priority": "Low",
+            "difficulty": "Low",
+            "importance": "Least Important",
+            "classification": "Functional",
+            "reserved": "FALSE",
+            "responsible": "Lucas Delgado",
+            "project": "Solaer",
+            "organization": "Company Name",
+            "modified": "2026-10-19T16:34:31Z",
+            "islastrevision": "true",
+            "identifier": "req-R1132101311184-00000676",
+            "policy": "Requirement",
+            "cestamp": "8FD603DC514E18006AD6469600004AE6"
+        },
+        {
+            "id": "8FD603DC514E18006AD6466800004AAE",
+            "type": "Specification Structure",
+            "businessType": "Specification Structure"
+        },
+        {
+            "id": "8FD603DC514E18006AD6467B00004AC4",
+            "type": "Specification Structure",
+            "businessType": "Specification Structure"
+        },
+        {
+            "id": "8FD603DC514E18006AD646B800004B08",
+            "type": "Sub Requirement",
+            "businessType": "Sub Requirement"
+        },
+        {
+            "id": "8FD603DC514E18006AD6468300004ADA",
+            "type": "Specification Structure",
+            "businessType": "Specification Structure"
+        },
+        {
+            "id": "8FD603DC514E18006AD6469700004AF0",
+            "type": "Sub Requirement",
+            "businessType": "Sub Requirement"
+        },
+        {
+            "Path": [
+                "8FD603DC514E18006AD6464400000213",
+                "8FD603DC514E18006AD6466800004AAE",
+                "8FD603DC514E18006AD6465800000221",
+                "8FD603DC514E18006AD6467B00004AC4",
+                "8FD603DC514E18006AD6466D00000227",
+                "8FD603DC514E18006AD646B800004B08",
+                "8FD603DC514E18006AD6469D0000023D"
+            ]
+        },
+        {
+            "Path": [
+                "8FD603DC514E18006AD6464400000213",
+                "8FD603DC514E18006AD6468300004ADA",
+                "8FD603DC514E18006AD6467E0000022F",
+                "8FD603DC514E18006AD6469700004AF0",
+                "8FD603DC514E18006AD6468900000237"
+            ]
+        }
+    ],
+    "totalItems": 13
+}
+
+{("8FD603DC514E18006AD6464400000213",
+    "8FD603DC514E18006AD6465800000221"): {
+        "connectionID": "8FD603DC514E18006AD6466800004AAE",
+        "type": "chapter-chapter"
+    }, ("8FD603DC514E18006AD6465800000221",
+    "8FD603DC514E18006AD6466D00000227"): {
+        "connectionID": "8FD603DC514E18006AD6467B00004AC4",
+        "type": "chapter-req"
+    }, ("8FD603DC514E18006AD6466D00000227",
+    "8FD603DC514E18006AD6469D0000023D"): {
+        "connectionID": "8FD603DC514E18006AD646B800004B08",
+        "type": "req-req"
+    }, ("8FD603DC514E18006AD6464400000213",
+    "8FD603DC514E18006AD6467E0000022F"): {
+        "connectionID": "8FD603DC514E18006AD6468300004ADA",
+        "type": "chapter-req"
+    }, ("8FD603DC514E18006AD6467E0000022F",
+    "8FD603DC514E18006AD6468900000237"): {
+        "connectionID": "8FD603DC514E18006AD6469700004AF0",
+        "type": "req-req"
+    }
+}

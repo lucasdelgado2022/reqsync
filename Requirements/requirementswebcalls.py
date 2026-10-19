@@ -71,8 +71,11 @@ def create_specification(session,CSRF,title):
                     }
                 }]}
     response = session.post(URL,params=params,headers=headers,json=payload)
-    id = response.json().get("member","")[0].get("id","")
-       
+    try:
+        id = response.json().get("member","")[0].get("id","")
+    except Exception as e:
+        print("Error creating specification:", e)
+        raise Exception("Failed to create specification. Response: {}".format(response.text))  
     return id
 
 def edit_requirement(session,CSRF,id,content):
@@ -85,21 +88,19 @@ def edit_requirement(session,CSRF,id,content):
         
     return response
 
-def getconfig_requirement(session,id):
-    URL = FullURL("/dsreq:Requirement/"+id)
-    headers = _get_headers(security_context=SecurityContext)
-    params2=params
-    params2.update(
-        {
-            "$mask":"dsreq:RequirementPublicMask.Details"
-        }
-    )
-    response = session.get(URL,params=params2,headers=headers)
+def edit_chapter(session,CSRF,id,title):
+    URL = FullURL("/dsreq:Chapter/"+id)
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    payload = {"title":title}
+    response = session.patch(URL,params=params,headers=headers,json=payload)
     
         
     return response
 
-def expand(session,CSRF,id,depth):
+
+
+def expand_spec(session,CSRF,id,depth):
     URL = FullURL("/dsreq:RequirementSpecification/"+id+"/expand")
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     payload = {
@@ -108,7 +109,47 @@ def expand(session,CSRF,id,depth):
     }
     response=session.post(URL,params=params,headers=headers,json=payload)
     return response
-def assign_child(session,CSRF,parent,childs:list[str]):
+
+def expand_chapter(session,CSRF,id,depth):
+    URL = FullURL("/dsreq:Chapter/"+id+"/expand")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    payload = {
+        "expandDepth":depth,
+        "withPath": True
+    }
+    response=session.post(URL,params=params,headers=headers,json=payload)
+    return response
+
+def create_chapters(session,CSRF,titles:list[str]):
+    #maximo de a 10
+    URL = FullURL("/dsreq:Chapter")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    idmap = {}
+    items=[]
+    for title in titles:
+        items.append(
+                {
+                    "type":"Chapter",
+                    "attributes": {
+                        "title": title
+                    }
+                })
+    
+
+    payload = {"items":items}
+    response = session.post(URL,params=params,headers=headers,json=payload)
+    
+        
+    for result in response.json().get("member",""):
+        idmap.update({
+                result.get("title",""):result.get("id","")
+        })
+    
+       
+    return response,idmap
+
+def assign_child_req_req(session,CSRF,parent,childs:list[str]):
     #maximo de a 10
     URL = FullURL("/dsreq:Requirement/"+parent+"/dsreq:SubRequirementUsage")
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
@@ -127,7 +168,7 @@ def assign_child(session,CSRF,parent,childs:list[str]):
     
 
     payload = {"instances":instances}
-    params2=params
+    params2=params.copy()
     params2.update({
         "$mask":"dsreq:SubRequirementUsageMask.Filterable"}
     )
@@ -135,9 +176,33 @@ def assign_child(session,CSRF,parent,childs:list[str]):
         
     return response
 
-def assign_child_spec(session,CSRF,parent,childs:list[str]):
+def assign_child_spec_chapter(session,CSRF,parent,childs:list[str]):
     #maximo de a 10
-    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:RequirementUsage")
+    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:ChapterUsage")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    instances=[]
+    for child in childs:
+        instances.append(
+                {
+                    "referencedObject":{
+                        "id":child,
+                        "type":"Chapter",
+                        "source": logindata.get("SPACE_URL"),
+                        "relativePath":"/resources/v1/modeler/dsreq/dsreq:Chapter/"+child
+                    }
+                })
+    
+
+
+    payload = {"instances":instances}
+    params2=params.copy()
+    response = session.post(URL,params=params2,headers=headers,json=payload)
+        
+    return response
+
+def assign_child_chapter_req(session,CSRF,parent,childs:list[str]):
+    URL = FullURL("/dsreq:Chapter/"+parent+"/dsreq:RequirementUsage")
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     
     instances=[]
@@ -148,21 +213,38 @@ def assign_child_spec(session,CSRF,parent,childs:list[str]):
                         "id":child,
                         "type":"Requirement",
                         "source": logindata.get("SPACE_URL"),
-                        "relativePath":"/resources/v1/modeler/dsreq/dsreq:Requirement/"+child
+                        "relativePath":"resources/v1/modeler/dsreq/dsreq:Requirement/"+child
                     }
                 })
     
 
     payload = {"instances":instances}
-    params2=params
+    params2=params.copy()
+    params2.update({
+        "$mask":"dsreq:RequirementUsageMask.Filterable"}
+    )
     response = session.post(URL,params=params2,headers=headers,json=payload)
         
     return response
 
+def assign_child_chapter_chapter(session,CSRF,parent,childs:list[str]):
+    URL = FullURL("/dsreq:Chapter/"+parent+"/dsreq:ChapterUsage")
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    instances = [
+        {
+            "referencedObject": {
+                "id": child,
+                "type": "Chapter",
+                "source": logindata.get("SPACE_URL"),
+                "relativePath": "/resources/v1/modeler/dsreq/dsreq:Chapter/"+child,
+            }
+        }
+        for child in childs
+    ]
+    return session.post(URL, params=params, headers=headers, json={"instances": instances})
 
-def delete_child_spec(session,CSRF,parent,child):
-    #de a 1
-    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:RequirementUsage/"+child)
+def delete_child_chapter_req(session,CSRF,parent,child):
+    URL = FullURL("/dsreq:Chapter/"+parent+"/dsreq:RequirementUsage/"+child)
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
     
     
@@ -170,7 +252,24 @@ def delete_child_spec(session,CSRF,parent,child):
         
     return response
 
-def delete_child(session,CSRF,parent,child):
+def delete_child_chapter_chapter(session,CSRF,parent,child):
+    URL = FullURL("/dsreq:Chapter/"+parent+"/dsreq:ChapterUsage/"+child)
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    return session.delete(URL,params=params,headers=headers)
+
+def delete_child_spec_chapter(session,CSRF,parent,child):
+    #de a 1
+    URL = FullURL("/dsreq:RequirementSpecification/"+parent+"/dsreq:ChapterUsage/"+child)
+    headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
+    
+    
+    response = session.delete(URL,params=params,headers=headers)
+        
+    return response
+
+
+
+def delete_child_req_req(session,CSRF,parent,child):
     #de a 1
     URL = FullURL("/dsreq:Requirement/"+parent+"/dsreq:SubRequirementUsage/"+child)
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
@@ -179,4 +278,3 @@ def delete_child(session,CSRF,parent,child):
     response = session.delete(URL,params=params,headers=headers)
         
     return response
-
