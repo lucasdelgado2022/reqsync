@@ -4,26 +4,39 @@ One-way synchronization of an Excel requirement hierarchy to 3DEXPERIENCE.
 Excel is the source of truth; PostgreSQL stores current object mappings, active
 parent-child usage IDs, and prior object and usage IDs.
 
-## Workbook format
+## Workbook formats
 
-The selected worksheet must have these four headers (case-insensitive):
+The parser accepts either of these layouts:
 
-| Header | Meaning |
-| --- | --- |
-| `internalid` | Unique, stable workbook ID and the 3DEXPERIENCE title |
-| `content` | Requirement description; ignored for chapters |
-| `parent_ids` | Zero or more parent `internalid` values, separated by semicolons |
-| `type` | `C` for Chapter; `R` or blank for Requirement |
+### Implicit hierarchy in columns A-F
 
-Rows are processed in worksheet order. For each parent, its children are linked
-in that same row order.
+For the current format, the first two worksheet rows are headings and data
+starts on row 3:
 
-A row without parents must be a Chapter and is placed under the generated
-Requirement Specification. Chapters can contain chapters or requirements;
-requirements can contain requirements but not chapters. Requirements must
-have a parent. Multiple parents are supported. Unknown IDs, duplicate IDs,
-invalid types, and cyclic hierarchies are rejected before 3DEXPERIENCE changes
-are made.
+- Columns A-F contain the hierarchy markers at each level.
+- Column G contains the object text.
+- Column H is ignored.
+- Columns I-N are appended to requirement content, when non-empty:
+  `NOTAS/OBSERVACIONES`, `CLASIFICACIÓN FACH`, `CLASIFICACIÓN ARMADA`,
+  `FACH FECHA`, `ARMADA FECHA`, and `DIFERENCIAS`.
+- A value in column A creates a Chapter. Its 3DEXPERIENCE title is the
+  identifier and column G text, such as `A GENERALES`.
+- Values at lower levels create Requirements. Their ID and title are the
+  populated hierarchy markers joined with hyphens, such as `A-1` or `A-3-a`.
+  Requirement content is column G followed by the non-empty metadata fields,
+  each on a new line.
+- Each row's parent is the preceding hierarchy level. Parent rows must appear
+  before their children. Rows are processed in worksheet order.
+
+### Explicit columns
+
+Existing workbooks with `internalid`, `content`, `parent_ids`, and `type`
+headers (case-insensitive) remain supported. `type = C` identifies a Chapter;
+`R` or blank identifies a Requirement. `parent_ids` is a semicolon-delimited
+list of identifiers.
+
+Both layouts reject duplicate identifiers, unknown parents, invalid
+hierarchies, and cycles before making 3DEXPERIENCE changes.
 
 ## Synchronization
 
@@ -31,8 +44,10 @@ The script validates the workbook before making 3DEXPERIENCE changes. On the
 first run against an empty mapping database, it creates the root specification,
 stages workbook IDs and relationships in PostgreSQL, creates the chapters and
 requirements, stores their 3DEXPERIENCE IDs, creates the usage relationships,
-and releases objects from the deepest level upwards, releasing the
-specification last.
+and asks whether to release the new structure. Answer `y`/`yes` to release
+objects from the deepest level upwards, releasing the specification last.
+Answer `n`/`no` (or press Enter) to leave the pending objects unreleased; a
+later run asks again.
 
 On later runs, it compares workbook content and relationships with PostgreSQL.
 Changed requirements and affected ancestors are revised from the deepest level
@@ -42,7 +57,8 @@ when revision inheritance or a link change rearranged the structure. Removed
 workbook rows stay mapped as inactive objects but their links are removed from
 the active specification structure. The current and immediately previous
 3DEXPERIENCE object IDs are stored in `3dxid` and `previous_3dxid`.
-New and revised objects are released after reconciliation.
+New and revised objects are released after reconciliation only after explicit
+confirmation. Declining keeps the release-pending state in PostgreSQL.
 Relationship expansions are retried when expected inherited links are not yet
 indexed, waiting 10 seconds and increasing the interval by 10 seconds up to a
 five-minute limit. If expected links remain missing, the run fails rather than

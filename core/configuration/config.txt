@@ -1,0 +1,4 @@
+PASSPORT_URL=https://r1132101857421-eu1.iam.3dexperience.3ds.com/3DPassport
+SPACE_URL=https://r1132101857421-us1-space.3dexperience.3ds.com/enovia
+TENANT=R1132101857421
+SECURITYCONTEXT=VPLMAdmin.Company Name.Default

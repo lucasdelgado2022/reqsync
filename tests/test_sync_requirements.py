@@ -1,5 +1,6 @@
 import unittest
 import importlib.util
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
@@ -7,11 +8,15 @@ from unittest.mock import patch
 
 from openpyxl import Workbook
 
+from Requirements import requirementswebcalls
 from excel_parser import ROOT_SPEC_ID, RequirementNode, parse_requirement_structure
 from sync_requirements import (
     TdxAdapter,
+    _confirm_release,
     _fetch_structures,
+    _has_pending_release,
     _ordered_edges,
+    _release_pending_objects,
     plan_changes,
 )
 
@@ -24,6 +29,19 @@ class RequirementWorkbookTests(unittest.TestCase):
         workbook = Workbook()
         sheet = workbook.active
         sheet.append(["internalid", "content", "parent_ids", "type"])
+        for row in rows:
+            sheet.append(row)
+        workbook.save(path)
+        return path
+
+    def _make_hierarchical_workbook(self, rows):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "hierarchy.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append([None, None, None, None, None, None, "REQUERIMIENTOS"])
+        sheet.append([1, 2, 3, 4, 5, 6])
         for row in rows:
             sheet.append(row)
         workbook.save(path)
@@ -89,6 +107,55 @@ class RequirementWorkbookTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unknown parent"):
             parse_requirement_structure(path)
+
+    def test_parses_implicit_hierarchy_and_metadata_columns(self):
+        path = self._make_hierarchical_workbook(
+            [
+                ["A", None, None, None, None, None, "GENERALES"],
+                [None, 3, None, None, None, None, "Parent requirement"],
+                [None, None, "a", None, None, None, "Child requirement",
+                 None, "Observation", "Must", "Optional",
+                 datetime(2026, 8, 13), None, "Difference"],
+            ]
+        )
+
+        nodes, edges = parse_requirement_structure(path)
+
+        self.assertEqual(nodes["A"].object_type, "Chapter")
+        self.assertEqual(nodes["A"].display_title, "A GENERALES")
+        self.assertEqual(nodes["A-3"].object_type, "Requirement")
+        self.assertEqual(nodes["A-3"].display_title, "A-3")
+        self.assertEqual(nodes["A-3-a"].display_title, "A-3-a")
+        self.assertEqual(
+            nodes["A-3-a"].content,
+            "Child requirement\n"
+            "NOTAS/OBSERVACIONES: Observation\n"
+            "CLASIFICACIÓN FACH: Must\n"
+            "CLASIFICACIÓN ARMADA: Optional\n"
+            "FACH FECHA: 2026-08-13\n"
+            "DIFERENCIAS: Difference",
+        )
+        self.assertEqual(
+            edges,
+            {
+                (ROOT_SPEC_ID, "A"),
+                ("A", "A-3"),
+                ("A-3", "A-3-a"),
+            },
+        )
+
+    def test_parses_current_import_workbook_hierarchy(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        path = repository_root / "requirements_import.xlsx"
+        if not path.exists():
+            self.skipTest("Current requirements_import.xlsx is not present")
+
+        nodes, edges = parse_requirement_structure(path)
+
+        self.assertEqual(nodes["A"].display_title, "A GENERALES")
+        self.assertEqual(nodes["B"].display_title, "B OPERACIONALES")
+        self.assertIn(("B-8", "B-8-a"), edges)
+        self.assertEqual(nodes["B-8-a"].object_type, "Requirement")
 
 
 class ChangePlanningTests(unittest.TestCase):
@@ -239,6 +306,62 @@ class ChangePlanningTests(unittest.TestCase):
 
 
 class TdxAdapterTests(unittest.TestCase):
+    def test_creates_nodes_with_display_titles_and_requirement_content(self):
+        class Operations:
+            def create_several_chapters(self, titles, contents):
+                self.chapter_call = (titles, contents)
+                return {title: f"chapter-{index}" for index, title in enumerate(titles)}
+
+            def create_several_reqs(self, titles, contents):
+                self.requirement_call = (titles, contents)
+                return {title: f"requirement-{index}" for index, title in enumerate(titles)}
+
+        operations = Operations()
+        adapter = TdxAdapter(operations)
+
+        chapter_ids = adapter.create_nodes(
+            "Chapter",
+            [RequirementNode("A", "Chapter", "", "A GENERALES")],
+        )
+        requirement_ids = adapter.create_nodes(
+            "Requirement",
+            [RequirementNode("A-1", "Requirement", "Text\nNOTAS: note", "A-1")],
+        )
+
+        self.assertEqual(operations.chapter_call, (["A GENERALES"], [""]))
+        self.assertEqual(operations.requirement_call, (["A-1"], ["Text\nNOTAS: note"]))
+        self.assertEqual(chapter_ids, {"A GENERALES": "chapter-0"})
+        self.assertEqual(requirement_ids, {"A-1": "requirement-0"})
+
+    def test_requirement_content_sends_html_line_breaks(self):
+        class Response:
+            status_code = 200
+
+        class Session:
+            def __init__(self):
+                self.kwargs = None
+
+            def patch(self, _url, **kwargs):
+                self.kwargs = kwargs
+                return Response()
+
+        session = Session()
+        with patch.object(
+            requirementswebcalls, "FullURL", side_effect=lambda path: path
+        ):
+            response = requirementswebcalls.edit_requirement(
+                session,
+                "csrf-token",
+                "requirement-id",
+                "Requirement text\r\nNOTAS: <pending> & detail",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            session.kwargs["json"]["contentData"],
+            "Requirement text<br/>NOTAS: &lt;pending&gt; &amp; detail",
+        )
+
     def test_creates_relationship_using_existing_operations(self):
         class Operations:
             calls = []
@@ -446,6 +569,64 @@ class IndexRetryTests(unittest.TestCase):
                 sleeper=sleep,
                 clock=lambda: now[0],
             )
+
+
+class ReleasePromptTests(unittest.TestCase):
+    def test_accepts_yes_and_no_answers(self):
+        self.assertTrue(_confirm_release(lambda _prompt: "yes"))
+        self.assertFalse(_confirm_release(lambda _prompt: "no"))
+        self.assertFalse(_confirm_release(lambda _prompt: ""))
+
+    def test_reprompts_on_invalid_answer(self):
+        answers = iter(["later", "y"])
+        prompts = []
+
+        def input_fn(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        self.assertTrue(_confirm_release(input_fn))
+        self.assertEqual(len(prompts), 2)
+
+    def test_end_of_input_defers_release(self):
+        self.assertFalse(
+            _confirm_release(
+                lambda _prompt: (_ for _ in ()).throw(EOFError())
+            )
+        )
+
+    def test_pending_release_detection(self):
+        self.assertTrue(
+            _has_pending_release(
+                {"C1": {"release_pending": False}, "R1": {"release_pending": True}}
+            )
+        )
+        self.assertFalse(
+            _has_pending_release({"C1": {"release_pending": False}})
+        )
+
+    def test_declining_keeps_pending_objects_unreleased(self):
+        class Api:
+            def release(self, *_args):
+                raise AssertionError("Release must not run after declining")
+
+        pending = {
+            ROOT_SPEC_ID: {"release_pending": True},
+            "C1": {"release_pending": True},
+        }
+
+        released = _release_pending_objects(
+            connection=None,
+            api=Api(),
+            nodes={},
+            db_nodes=pending,
+            active_ids={},
+            target_edges=set(),
+            confirm_release=lambda: False,
+        )
+
+        self.assertFalse(released)
+        self.assertTrue(all(node["release_pending"] for node in pending.values()))
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +7,14 @@ from openpyxl import load_workbook
 
 ROOT_SPEC_ID = "Estructura de Requerimientos automaticos"
 REQUIRED_COLUMNS = {"internalid", "content", "parent_ids", "type"}
+METADATA_COLUMNS = (
+    (8, "NOTAS/OBSERVACIONES"),
+    (9, "CLASIFICACIÓN FACH"),
+    (10, "CLASIFICACIÓN ARMADA"),
+    (11, "FACH FECHA"),
+    (12, "ARMADA FECHA"),
+    (13, "DIFERENCIAS"),
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +22,11 @@ class RequirementNode:
     internalid: str
     object_type: str
     content: str
+    title: str | None = None
+
+    @property
+    def display_title(self) -> str:
+        return self.title if self.title is not None else self.internalid
 
 
 def parse_requirement_structure(
@@ -44,6 +58,9 @@ def parse_requirement_structure(
             str(value).strip().lower() if value is not None else ""
             for value in header_row
         ]
+        if "internalid" not in headers:
+            return _parse_hierarchical_rows(sheet)
+
         non_empty_headers = [header for header in headers if header]
         if len(non_empty_headers) != len(set(non_empty_headers)):
             raise ValueError("Workbook contains duplicate column headers")
@@ -107,7 +124,12 @@ def parse_requirement_structure(
                 )
             )
 
-            nodes[internalid] = RequirementNode(internalid, object_type, content)
+            nodes[internalid] = RequirementNode(
+                internalid,
+                object_type,
+                content if object_type == "Requirement" else "",
+                content if object_type == "Chapter" and content else None,
+            )
             parent_ids[internalid] = parents
 
         if not nodes:
@@ -142,6 +164,112 @@ def parse_requirement_structure(
         return nodes, edges
     finally:
         workbook.close()
+
+
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _parse_hierarchical_rows(sheet) -> tuple[
+    dict[str, RequirementNode], set[tuple[str, str]]
+]:
+    nodes: dict[str, RequirementNode] = {}
+    edges: set[tuple[str, str]] = set()
+    hierarchy: list[str | None] = [None] * 6
+
+    for row_number, row in enumerate(
+        sheet.iter_rows(min_row=3, min_col=1, max_col=14, values_only=True),
+        start=3,
+    ):
+        values = tuple(row)
+        markers = [_cell_text(values[index]) for index in range(6)]
+        populated_levels = [
+            index for index, marker in enumerate(markers) if marker
+        ]
+        text = _cell_text(values[6] if len(values) > 6 else None)
+
+        if not populated_levels:
+            if text:
+                raise ValueError(
+                    f"Row {row_number}: requirement text is present but no "
+                    "hierarchy identifier appears in columns A-F"
+                )
+            continue
+
+        level = max(populated_levels)
+        for index in range(level + 1):
+            if markers[index]:
+                hierarchy[index] = markers[index]
+            elif hierarchy[index] is None:
+                raise ValueError(
+                    f"Row {row_number}: hierarchy level {index + 1} has no "
+                    "identifier or inherited parent"
+                )
+        hierarchy[level + 1 :] = [None] * (5 - level)
+
+        identifier_parts = hierarchy[: level + 1]
+        if any(part is None for part in identifier_parts):
+            raise ValueError(f"Row {row_number}: incomplete hierarchy path")
+        internalid = "-".join(part for part in identifier_parts if part is not None)
+        if internalid == ROOT_SPEC_ID:
+            raise ValueError(
+                f"Row {row_number}: {ROOT_SPEC_ID!r} is reserved for the root specification"
+            )
+        if internalid in nodes:
+            raise ValueError(
+                f"Row {row_number}: duplicate hierarchy identifier {internalid!r}"
+            )
+
+        if level == 0:
+            title = f"{identifier_parts[0]} {text}".strip()
+            node = RequirementNode(internalid, "Chapter", "", title)
+            parent_id = ROOT_SPEC_ID
+        else:
+            title = internalid
+            description = text
+            metadata = []
+            for column_index, label in METADATA_COLUMNS:
+                value = _cell_text(
+                    values[column_index] if len(values) > column_index else None
+                )
+                if value:
+                    metadata.append(f"{label}: {value}")
+            content_parts = [description] if description else []
+            content_parts.extend(metadata)
+            node = RequirementNode(
+                internalid,
+                "Requirement",
+                "\n".join(content_parts),
+                title,
+            )
+            parent_id = "-".join(
+                part for part in identifier_parts[:-1] if part is not None
+            )
+            if parent_id not in nodes:
+                raise ValueError(
+                    f"Row {row_number}: parent hierarchy {parent_id!r} "
+                    "must appear before its child"
+                )
+            if not text and not metadata:
+                raise ValueError(
+                    f"Row {row_number}: requirement has neither text nor metadata"
+                )
+
+        nodes[internalid] = node
+        edges.add((parent_id, internalid))
+
+    if not nodes:
+        raise ValueError("Workbook contains no hierarchy rows")
+    _validate_acyclic(nodes, edges)
+    return nodes, edges
 
 
 def _validate_acyclic(

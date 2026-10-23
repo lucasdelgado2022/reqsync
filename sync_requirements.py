@@ -15,7 +15,7 @@ from excel_parser import ROOT_SPEC_ID, RequirementNode, parse_requirement_struct
 
 
 LOGGER = logging.getLogger("reqsync")
-SPEC_TITLE_DEFAULT = "Estructura de Requerimientos automaticos"
+SPEC_TITLE_DEFAULT = "STM RRFF"
 REVISION_BATCH_SIZE = 100
 INDEX_RETRY_TIMEOUT_SECONDS = 5 * 60
 INDEX_RETRY_STEP_SECONDS = 10
@@ -60,7 +60,7 @@ class TdxAdapter:
     def create_nodes(
         self, object_type: str, nodes: list[RequirementNode]
     ) -> dict[str, str]:
-        titles = [node.internalid for node in nodes]
+        titles = [node.display_title for node in nodes]
         if object_type == "Chapter":
             result = self.operations.create_several_chapters(
                 titles, [node.content for node in nodes]
@@ -70,6 +70,19 @@ class TdxAdapter:
                 titles, [node.content for node in nodes]
             )
         return result
+
+    def update_chapter_title(self, object_id: str, title: str) -> None:
+        response = self.operations.edit_chapter(
+            self.operations.session,
+            self.operations.ENO_CSRF_TOKEN,
+            object_id,
+            title,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Could not set 3DEXPERIENCE chapter title {title!r}: "
+                f"{response.status_code} {response.text}"
+            )
 
     def revise_requirements(
         self, ids: list[str], content_changes: list[str | None]
@@ -311,7 +324,9 @@ def stage_workbook_state(
                 """,
                 (
                     node.internalid,
-                    node.content if node.object_type == "Requirement" else None,
+                    node.content
+                    if node.object_type == "Requirement"
+                    else node.display_title,
                     node.object_type,
                 ),
             )
@@ -439,8 +454,18 @@ def plan_changes(
             and db_nodes[internalid]["content"] != node.content
         )
     }
+    title_changes = {
+        internalid
+        for internalid, node in nodes.items()
+        if (
+            node.object_type == "Chapter"
+            and internalid in db_nodes
+            and db_nodes[internalid]["3dxid"] is not None
+            and db_nodes[internalid]["content"] != node.display_title
+        )
+    }
 
-    to_revise = changed_parents | direct_changes
+    to_revise = changed_parents | direct_changes | title_changes
     parent_graph: dict[str, set[str]] = defaultdict(set)
     for parent_id, child_id in set(db_edges) | target_edges:
         parent_graph[child_id].add(parent_id)
@@ -462,6 +487,7 @@ def plan_changes(
         "created": created,
         "removed": removed,
         "direct_changes": direct_changes,
+        "title_changes": title_changes,
         "to_revise": to_revise,
         "target_edges": target_edges,
         "edge_changes": edge_changes,
@@ -531,17 +557,19 @@ def _create_missing_nodes(
         ]
         if not batch:
             continue
-        titles = [node.internalid for node in batch]
+        titles = [node.display_title for node in batch]
         id_map = _ensure_id_map(
             api.create_nodes(object_type, batch), titles, object_type.lower()
         )
         for node in batch:
-            object_id = id_map[node.internalid]
+            object_id = id_map[node.display_title]
             persist_mapping(
                 connection,
                 node.internalid,
                 object_id,
-                node.content if object_type == "Requirement" else None,
+                node.content
+                if object_type == "Requirement"
+                else node.display_title,
                 object_type,
                 active=True,
                 release_pending=True,
@@ -560,6 +588,7 @@ def _revise_nodes(
     active_ids: dict[str, str],
     target_edges: set[tuple[str, str]],
     content_changes: set[str],
+    title_changes: set[str],
 ) -> set[str]:
     revision_ids: set[str] = set()
     depths = _compute_depths(nodes, target_edges, set(db_nodes))
@@ -597,8 +626,16 @@ def _revise_nodes(
                     content = (
                         node.content
                         if node is not None and node.object_type == "Requirement"
+                        else node.display_title
+                        if node is not None
                         else db_nodes[internalid]["content"]
                     )
+                    if (
+                        object_type == "Chapter"
+                        and internalid in title_changes
+                        and node is not None
+                    ):
+                        api.update_chapter_title(new_id, node.display_title)
                     persist_mapping(
                         connection,
                         internalid,
@@ -1064,6 +1101,27 @@ def _set_active_state(connection, internalid: str, active: bool) -> None:
     connection.commit()
 
 
+def _has_pending_release(db_nodes: dict[str, dict]) -> bool:
+    return any(record["release_pending"] for record in db_nodes.values())
+
+
+def _confirm_release(input_fn=None) -> bool:
+    read_input = input if input_fn is None else input_fn
+    while True:
+        try:
+            answer = read_input(
+                "Structure is ready. Release it to 3DEXPERIENCE now? [y/N]: "
+            ).strip().lower()
+        except EOFError:
+            print("No response received; keeping the structure unreleased.")
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"", "n", "no"}:
+            return False
+        print("Please answer yes or no.")
+
+
 def _release_pending_objects(
     connection,
     api: TdxAdapter,
@@ -1071,7 +1129,21 @@ def _release_pending_objects(
     db_nodes: dict[str, dict],
     active_ids: dict[str, str],
     target_edges: set[tuple[str, str]],
-) -> None:
+    *,
+    confirm_release=None,
+) -> bool:
+    if not _has_pending_release(db_nodes):
+        return False
+
+    should_release = (
+        _confirm_release() if confirm_release is None else confirm_release()
+    )
+    if not should_release:
+        LOGGER.info(
+            "Release deferred by user; objects remain pending release for the next run"
+        )
+        return False
+
     pending_ids = {
         internalid
         for internalid, record in db_nodes.items()
@@ -1118,6 +1190,7 @@ def _release_pending_objects(
             )
         connection.commit()
         LOGGER.info("Released root specification %s", spec_id)
+    return True
 
 
 def synchronize(
@@ -1130,6 +1203,7 @@ def synchronize(
     index_timeout_seconds: int = INDEX_RETRY_TIMEOUT_SECONDS,
     sleeper=time.sleep,
     clock=time.monotonic,
+    confirm_release=None,
 ) -> None:
     ensure_schema(connection)
     with connection.cursor() as cursor:
@@ -1193,7 +1267,9 @@ def synchronize(
             node = nodes[internalid]
             db_nodes[internalid] = {
                 "3dxid": object_id,
-                "content": node.content if node.object_type == "Requirement" else None,
+                "content": node.content
+                if node.object_type == "Requirement"
+                else node.display_title,
                 "object_type": node.object_type,
                 "active": True,
                 "release_pending": True,
@@ -1207,7 +1283,11 @@ def synchronize(
 
         for internalid, node in nodes.items():
             if internalid in db_nodes and not db_nodes[internalid]["active"]:
-                content = node.content if node.object_type == "Requirement" else None
+                content = (
+                    node.content
+                    if node.object_type == "Requirement"
+                    else node.display_title
+                )
                 persist_mapping(
                     connection,
                     internalid,
@@ -1228,6 +1308,7 @@ def synchronize(
             active_ids,
             plan["target_edges"],
             plan["direct_changes"],
+            plan["title_changes"],
         )
         if ROOT_SPEC_ID in plan["to_revise"] and not specification_created:
             old_spec_id = active_ids[ROOT_SPEC_ID]
@@ -1297,7 +1378,13 @@ def synchronize(
         )
 
         _release_pending_objects(
-            connection, api, nodes, db_nodes, active_ids, plan["target_edges"]
+            connection,
+            api,
+            nodes,
+            db_nodes,
+            active_ids,
+            plan["target_edges"],
+            confirm_release=confirm_release,
         )
         LOGGER.info(
             "Synchronization complete: %d workbook object(s), %d relationship(s)",

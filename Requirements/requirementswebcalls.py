@@ -1,4 +1,5 @@
 import sys
+from html import escape
 from pathlib import Path
 
 parent_dir = str(Path(__file__).resolve().parent.parent)
@@ -81,8 +82,10 @@ def create_specification(session,CSRF,title):
 def edit_requirement(session,CSRF,id,content):
     URL = FullURL("/dsreq:Requirement/"+id)
     headers = _get_headers(security_context=SecurityContext,eno_csrf_token=CSRF)
-    
-    payload = {"contentData":content}
+
+    escaped_content = escape(content, quote=False)
+    formatted_content = escaped_content.replace("\r\n", "\n").replace("\r", "\n")
+    payload = {"contentData":formatted_content.replace("\n", "<br/>")}
     response = session.patch(URL,params=params,headers=headers,json=payload)
     
         
