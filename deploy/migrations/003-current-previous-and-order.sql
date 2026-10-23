@@ -1,0 +1,8 @@
+ALTER TABLE id_mappings
+    ALTER COLUMN "3dxid" DROP NOT NULL;
+
+ALTER TABLE id_mappings
+    ADD COLUMN IF NOT EXISTS previous_3dxid VARCHAR(255);
+
+ALTER TABLE requirement_connections
+    ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;

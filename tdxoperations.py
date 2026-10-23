@@ -15,7 +15,7 @@ def get_csrf():
     ENO_CSRF_TOKEN=getcsrf(session)
 
 
-def create_several_reqs(titles:list[str]):
+def create_several_reqs(titles:list[str], contents:list[str]):
     global ENO_CSRF_TOKEN
     if not len(titles)==len(contents):
         raise Exception("Longitud de titulo y contenido no coincide, deben coincidir y corresponderse indice a indice")
@@ -154,16 +154,16 @@ def release_several_chapters(ids:list[str]):
         if count < 100:
             idsreq.append(id)
         else:
-            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapters")
+            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapter")
             if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
                 ENO_CSRF_TOKEN=getcsrf(session)
-                response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapters")
+                response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapter")
             if not response.status_code == 200:
                 raise Exception("Error al congelar",idsreq)
-            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapters")
+            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapter")
             if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
                 ENO_CSRF_TOKEN=getcsrf(session)
-                response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapters")
+                response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapter")
             if not response.status_code == 200:
                 raise Exception("Error al liberar",idsreq)      
             count=0
@@ -172,16 +172,16 @@ def release_several_chapters(ids:list[str]):
         count+=1
     
     if not count==0:
-        response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapters")
+        response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapter")
         if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
             ENO_CSRF_TOKEN=getcsrf(session)
-            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapters")
+            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Frozen","Chapter")
         if not response.status_code == 200:
             raise Exception("Error al congelar",idsreq)
-        response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapters")
+        response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapter")
         if not response.status_code == 200 and "ENO_CSRF_TOKEN" in response.json().get("message",""):
             ENO_CSRF_TOKEN=getcsrf(session)
-            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapters")
+            response = changeState(session,ENO_CSRF_TOKEN,idsreq,"Release","Chapter")
         if not response.status_code == 200:
             raise Exception("Error al liberar",idsreq)      
         count=0
@@ -532,4 +532,3 @@ def get_structure_chapter(chapterid: str) -> dict[tuple[str, str], dict[str, str
                 }
 
     return tree_map
-

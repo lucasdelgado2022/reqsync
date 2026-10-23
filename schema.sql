@@ -29,9 +29,12 @@ SET default_table_access_method = heap;
 
 CREATE TABLE public.id_mappings (
     internalid character varying(255) NOT NULL,
-    "3dxid" character varying(255) NOT NULL,
+    "3dxid" character varying(255),
+    previous_3dxid character varying(255),
     content text,
-    object_type character varying(64) NOT NULL
+    object_type character varying(64) NOT NULL,
+    active boolean NOT NULL DEFAULT true,
+    release_pending boolean NOT NULL DEFAULT false
 );
 
 
@@ -45,11 +48,73 @@ CREATE TABLE public.requirement_connections (
     id integer NOT NULL,
     child_id character varying(255) NOT NULL,
     parent_id character varying(255) NOT NULL,
-    connection_3dx_id character varying(255)
+    connection_3dx_id character varying(255),
+    position integer DEFAULT 0 NOT NULL
 );
 
 
 ALTER TABLE public.requirement_connections OWNER TO db_user;
+
+--
+-- Name: object_revision_history; Type: TABLE; Schema: public; Owner: db_user
+--
+
+CREATE TABLE public.object_revision_history (
+    history_id bigint NOT NULL,
+    internalid character varying(255) NOT NULL,
+    "3dxid" character varying(255) NOT NULL,
+    content text,
+    object_type character varying(64) NOT NULL,
+    recorded_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT object_revision_history_internalid_3dxid_key UNIQUE (internalid, "3dxid")
+);
+
+ALTER TABLE public.object_revision_history OWNER TO db_user;
+
+CREATE SEQUENCE public.object_revision_history_history_id_seq
+    AS bigint START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER SEQUENCE public.object_revision_history_history_id_seq OWNER TO db_user;
+ALTER SEQUENCE public.object_revision_history_history_id_seq
+    OWNED BY public.object_revision_history.history_id;
+ALTER TABLE ONLY public.object_revision_history
+    ALTER COLUMN history_id SET DEFAULT nextval('public.object_revision_history_history_id_seq'::regclass);
+ALTER TABLE ONLY public.object_revision_history
+    ADD CONSTRAINT object_revision_history_pkey PRIMARY KEY (history_id);
+ALTER TABLE ONLY public.object_revision_history
+    ADD CONSTRAINT object_revision_history_internalid_fkey
+    FOREIGN KEY (internalid) REFERENCES public.id_mappings(internalid);
+CREATE INDEX idx_revision_history_3dxid ON public.object_revision_history USING btree ("3dxid");
+
+--
+-- Name: connection_history; Type: TABLE; Schema: public; Owner: db_user
+--
+
+CREATE TABLE public.connection_history (
+    history_id bigint NOT NULL,
+    child_id character varying(255) NOT NULL,
+    parent_id character varying(255) NOT NULL,
+    connection_3dx_id character varying(255),
+    recorded_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+ALTER TABLE public.connection_history OWNER TO db_user;
+
+CREATE SEQUENCE public.connection_history_history_id_seq
+    AS bigint START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER SEQUENCE public.connection_history_history_id_seq OWNER TO db_user;
+ALTER SEQUENCE public.connection_history_history_id_seq
+    OWNED BY public.connection_history.history_id;
+ALTER TABLE ONLY public.connection_history
+    ALTER COLUMN history_id SET DEFAULT nextval('public.connection_history_history_id_seq'::regclass);
+ALTER TABLE ONLY public.connection_history
+    ADD CONSTRAINT connection_history_pkey PRIMARY KEY (history_id);
+ALTER TABLE ONLY public.connection_history
+    ADD CONSTRAINT connection_history_child_id_fkey
+    FOREIGN KEY (child_id) REFERENCES public.id_mappings(internalid);
+ALTER TABLE ONLY public.connection_history
+    ADD CONSTRAINT connection_history_parent_id_fkey
+    FOREIGN KEY (parent_id) REFERENCES public.id_mappings(internalid);
+CREATE INDEX idx_connection_history_3dxid ON public.connection_history USING btree (connection_3dx_id);
 
 --
 -- Name: requirement_connections_id_seq; Type: SEQUENCE; Schema: public; Owner: db_user
